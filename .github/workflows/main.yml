@@ -1,0 +1,65 @@
+name: Babize FM 24/7 Stream
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Start Babize FM Stream
+        env:
+          ZENO_URL: ${{ secrets.ZENO_URL }}
+          ZENO_PASS: ${{ secrets.ZENO_PASS }}
+        run: |
+          echo "Starting Babize FM 24/7 automated streaming engine..."
+          
+          while true; do
+            # Get current hour in SAST (UTC+2)
+            CURRENT_HOUR=$(TZ="Africa/Johannesburg" date +%H)
+            
+            # Select folder based on time blocks
+            if [ "$CURRENT_HOUR" -ge 6 ] && [ "$CURRENT_HOUR" -lt 12 ]; then
+              FOLDER="music/morning"
+              echo "Time is $CURRENT_HOUR:00 SAST. Playing MORNING block."
+            elif [ "$CURRENT_HOUR" -ge 12 ] && [ "$CURRENT_HOUR" -lt 18 ]; then
+              FOLDER="music/midday"
+              echo "Time is $CURRENT_HOUR:00 SAST. Playing MIDDAY block."
+            else
+              FOLDER="music/night"
+              echo "Time is $CURRENT_HOUR:00 SAST. Playing NIGHT block."
+            fi
+            
+            # Check if folder has MP3 tracks
+            if [ ! -d "$FOLDER" ] || [ -z "$(ls -A $FOLDER/*.mp3 2>/dev/null)" ]; then
+              echo "Warning: No MP3 files found in $FOLDER. Retrying in 10 seconds..."
+              sleep 10
+              continue
+            fi
+            
+            # Create a randomized playlist of tracks in the current block
+            find "$FOLDER" -name "*.mp3" | shuf > playlist.txt
+            
+            echo "Current playlist queue:"
+            cat playlist.txt
+            
+            # Stream tracks using ffmpeg
+            while IFS= read -r TRACK; do
+              if [ -f "$TRACK" ]; then
+                echo "Broadcasting: $TRACK on Babize FM"
+                ffmpeg -re -i "$TRACK" \
+                  -content_type audio/mpeg \
+                  -f mp3 icecast://source:"$ZENO_PASS"@"$ZENO_URL" || true
+              fi
+            done < playlist.txt
+            
+            rm -f playlist.txt
+          done
